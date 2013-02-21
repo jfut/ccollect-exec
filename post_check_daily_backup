@@ -1,0 +1,119 @@
+#!/bin/sh
+#
+# Check daily backup directory
+#
+# Require:
+#     local mail server
+
+# Copyright (C) 2013 Jun Futagawa (jfut at integ.jp)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+set -e
+set -u
+
+# Configurations
+MAIL_TO="root"
+HOST_CONFIG_DIR="/etc/ccollect/sources"
+
+# Usage
+usage() {
+    cat << _EOF_
+
+Usage:
+    ${0} HOSTNAME...
+
+    Options:
+        -a Check all hosts
+
+_EOF_
+}
+
+# send failure mail
+send_failure_mail() {
+    HOSTNAME="$1"
+    BACKUP_DIR="$2"
+    STATUS="$3"
+    cat << _EOF_ | mail -s "ccollect backup failure: ${HOSTNAME}" ${MAIL_TO}
+ccollect backup failure
+-------------------------------------------------------
+
+Date: $(date -I)
+Host: ${HOSTNAME}
+Backup direcotry: ${BACKUP_DIR}
+Status: ${STATUS}
+_EOF_
+}
+
+# check today's backup directory
+check_today_backup() {
+    for HOSTNAME in ${@}; do
+        echo -n "Checking backup for ${HOSTNAME} : "
+
+        # check destination file
+        DESTINATION_FILE="${HOST_CONFIG_DIR}/${HOSTNAME}/destination"
+        if [ ! -f "${DESTINATION_FILE}" ]; then
+            echo "NG: ${DESTINATION_FILE} is not found."
+            send_failure_mail "${HOSTNAME}" "" "Destination file is not found"
+            continue
+        fi
+
+        # check backup direcotry
+        BACKUP_DIR="$(cat ${DESTINATION_FILE})"
+        if [ ! -d "${BACKUP_DIR}" ]; then
+            echo "NG: ${BACKUP_DIR} directory is not found."
+            send_failure_mail "${HOSTNAME}" "${BACKUP_DIR}" "Backup directory is not found"
+            continue
+        fi
+
+        # check backup direcotry for today
+        TODAY=$(date +'%Y%m%d')
+        is_exists_today_backup=$(ls "${BACKUP_DIR}" | grep ${TODAY} | wc -l)
+        if [ ${is_exists_today_backup} -eq 0 ]; then
+            echo "NG: backup directory for today is not found."
+            send_failure_mail "${HOSTNAME}" "${BACKUP_DIR}" "Backup directory for today is not found"
+        else
+            echo "OK"
+        fi
+    done
+}
+
+# Main
+main() {
+    [ $# -lt 1 ] && ( usage; exit 1 );
+
+    # See how we're called.
+    CHECK_ALL="no"
+    while getopts ap OPT; do
+        case "${OPT}" in
+            "a" )
+                CHECK_ALL="yes" ;;
+            * )
+                usage
+                exit 1
+                ;;
+        esac
+    done
+    shift $((${OPTIND} - 1))
+
+    # Check backup
+    if [ "${CHECK_ALL}" = "yes" ]; then
+        HOSTNAMES=$(ls ${HOST_CONFIG_DIR})
+        check_today_backup ${HOSTNAMES}
+    else
+        check_today_backup ${@}
+    fi
+}
+
+[ ${#BASH_SOURCE[@]} = 1 ] && main "$@"
